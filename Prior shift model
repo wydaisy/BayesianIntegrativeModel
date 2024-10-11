@@ -1,0 +1,81 @@
+% read data from the file
+cd('/Users/yangwang/Library/CloudStorage/OneDrive-UniversityofMarylandBaltimore/Collaborations/OLP/ComputationalModelling');
+filename = 'OLP_Bayesian_Raw_MissingDataImputed.xlsx';
+
+% Read the file into a table
+OLP = readtable(filename);
+
+% Get unique participant IDs
+participantIDs = unique(OLP.ID);
+
+% Loop through each participant to fit the VBM model
+for i = 1:length(participantIDs)
+    % Extract data for the current participant
+    participantData = data(strcmp(data.ID, participantIDs{i}), :);
+    
+    % Set up the input structure (in) for the current participant
+    in.priorOLP = [participantData.Prior_mean(1), participantData.Prior_var(1)];
+    in.priornoOLP = [participantData.Prior_mean(2), participantData.Prior_var(2)];
+    in.likeli = [participantData.Likelihood_mean(1), participantData.Likelihood_var(1)];
+    
+    % Extract experimental data for conditions (OLP = 1, no OLP = 2)
+    u = [participantData.Post_mean, participantData.Cond];  % VAS rating values and conditions
+    
+    % Define the VBA model structure
+    M.u = u;  % Input data (VAS ratings and conditions)
+    M.g_fname = @g_integrate_shift;  % Observation function for VBM
+    M.f_fname = [];  % No state transition function, static model
+    
+    % Define the model dimensions
+    M.dim.n = 0;  % No hidden states
+    M.dim.n_theta = 1;  % One evolution parameters: P(1) 
+    M.dim.n_phi = 0;  % No observation parameters to be estimated
+    
+    % Set priors for the evolution parameters (P(1)
+    M.priors.muTheta = 0;  % Prior mean for P(1)
+    M.priors.SigmaTheta = 0.5;  % Prior variance for P(1)
+
+    % Options for VBA
+    M.options.DisplayWin = 1;  % Display the VBA window during inversion
+    M.options.MaxIter = 128;  % Set a limit on the number of iterations
+
+    % Observed data (VAS ratings for each condition)
+    y = participantData.Post_mean;  % Replace with actual observed data
+
+    % Run VBA to estimate P(1) and P(2) using the participant's data
+    [posterior, out] = VBA_NLStateSpaceModel(y, M);
+    
+    % Display estimated parameter P(1)
+    disp(['Participant ', participantIDs{i}, ': Estimated P(1) = ', num2str(posterior.muTheta(1))]);
+end
+
+%% Define the observation function g_integrate_shift
+function gx = g_integrate_shift(~,P,u,in)
+    cond = u(2);
+
+    switch cond
+        case 1
+            % OLP
+            p1 = in.priorOLP(1) + P(1);
+            p2 = in.priorOLP(2);
+            l1 = in.likeli(1);
+            l2 = in.likeli(2);
+        case 2
+            % No OLP
+            p1 = in.priornoOLP(1);
+            p2 = in.priornoOLP(2);
+            l1 = in.likeli(1);
+            l2 = in.likeli(2);
+    end
+
+    % Compute the posterior mean and variance
+    post(1) = (p1 * l2 + p2 * l1) / (l2 + p2);
+    post(2) = (p2 * l2) / (p2 + l2);
+
+    % Compute the predicted CDF using the posterior mean and variance
+    gx = spm_Ncdf(u(1), post(1), post(2));  % Predicted CDF
+end
+
+
+
+
